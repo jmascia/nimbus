@@ -59,6 +59,11 @@
     request.delegate = nil;
   }
   [self.operation cancel];
+  
+  // JM: Clear our reference to the loading operation, because if somehow the operation finished
+  // loading from the network (i.e. it can't be cancelled), but it has not returned an image yet
+  // (maybe it's processing the image), then we don't want to show to show the new image.
+  self.operation = nil;
 }
 
 
@@ -164,7 +169,9 @@
                        displaySize: (CGSize)displaySize
                        contentMode: (UIViewContentMode)contentMode
                       scaleOptions: (NINetworkImageViewScaleOptions)scaleOptions
-                    expirationDate: (NSDate *)expirationDate {
+                    expirationDate: (NSDate *)expirationDate
+             doesReferenceThisView: (BOOL)doesReferenceThisView
+{
   // Store the result image in the memory cache.
   if (nil != self.imageMemoryCache && nil != image) {
     NSString* cacheKey = [self cacheKeyForCacheIdentifier:cacheIdentifier
@@ -177,34 +184,46 @@
                               withName: cacheKey
                           expiresAfter: expirationDate];
   }
-
-  if (nil != image) {
-    // Display the new image.
-    [self setImage:image];
-
-  } else {
-    [self setImage:self.initialImage];
+  
+  // JM: If the loaded image does not refer to this imageView (likely because it was given a
+  // new URL to load), then don't show the image and don't perform follow-up actions.
+  if (doesReferenceThisView) {
+    
+    if (nil != image) {
+      // Display the new image.
+      [self setImage:image];
+      
+    } else {
+      [self setImage:self.initialImage];
+    }
+    
+    self.operation = nil;
+    
+    if ([self.delegate respondsToSelector:@selector(networkImageView:didLoadImage:)]) {
+      [self.delegate networkImageView:self didLoadImage:self.image];
+    }
+    
+    [self networkImageViewDidLoadImage:image];
   }
-
-  self.operation = nil;
-
-  if ([self.delegate respondsToSelector:@selector(networkImageView:didLoadImage:)]) {
-    [self.delegate networkImageView:self didLoadImage:self.image];
-  }
-
-  [self networkImageViewDidLoadImage:image];
 }
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-- (void)_didFailToLoadWithError:(NSError *)error {
-  self.operation = nil;
-
-  if ([self.delegate respondsToSelector:@selector(networkImageView:didFailWithError:)]) {
-    [self.delegate networkImageView:self didFailWithError:error];
+- (void)_didFailToLoadWithError:(NSError *)error
+          doesReferenceThisView:(BOOL)doesReferenceThisView
+{
+  
+  // JM: If the failed load does not refer to this imageView (likely because it was given a
+  // new URL to load), then don't perform follow-up actions.
+  if (doesReferenceThisView) {
+    self.operation = nil;
+    
+    if ([self.delegate respondsToSelector:@selector(networkImageView:didFailWithError:)]) {
+      [self.delegate networkImageView:self didFailWithError:error];
+    }
+    
+    [self networkImageViewDidFailWithError:error];
   }
-
-  [self networkImageViewDidFailWithError:error];
 }
 
 
@@ -222,18 +241,30 @@
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 - (void)nimbusOperationDidFinish:(NIOperation<NINetworkImageOperation> *)operation {
+  
+  // JM: If the loaded image does not refer to this imageView (likely because it was given a
+  // new URL to load), then don't show the image and don't perform follow-up actions.
+  BOOL doesReferenceThisView = (operation.delegate == self);
+  
   [self _didFinishLoadingWithImage:operation.imageCroppedAndSizedForDisplay
                    cacheIdentifier:operation.cacheIdentifier
                        displaySize:operation.imageDisplaySize
                        contentMode:operation.imageContentMode
                       scaleOptions:operation.scaleOptions
-                    expirationDate:nil];
+                    expirationDate:nil
+             doesReferenceThisView:doesReferenceThisView];
 }
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 - (void)nimbusOperationDidFail:(NIOperation *)operation withError:(NSError *)error {
-  [self _didFailToLoadWithError:error];
+  
+  // JM: If the failed load does not refer to this imageView (likely because it was given a
+  // new URL to load), then don't perform follow-up actions.
+  BOOL doesReferenceThisView = (operation.delegate == self);
+  
+  [self _didFailToLoadWithError:error
+          doesReferenceThisView:doesReferenceThisView];
 }
 
 
@@ -382,22 +413,40 @@
                                        displaySize:displaySize
                                       scaleOptions:self.scaleOptions
                               interpolationQuality:self.interpolationQuality];
-
+         
        } success:^(NSURLRequest *successfulRequest, NSHTTPURLResponse *response, UIImage *processedImage) {
+         
+         // JM: If the stored operation points to a different request than this one, then this operation
+         // does not refer to this imageView, so don't display the downloaded image.
+         BOOL doesReferenceThisView = NO;
+         if ([self.operation isKindOfClass:[AFImageRequestOperation class]]) {
+           doesReferenceThisView = (successfulRequest == ((AFImageRequestOperation*)self.operation).request);
+         }
+         
          [self _didFinishLoadingWithImage:processedImage
                           cacheIdentifier:pathToNetworkImage
                               displaySize:displaySize
                               contentMode:contentMode
                              scaleOptions:self.scaleOptions
-                           expirationDate:nil];
-
+                           expirationDate:nil
+                    doesReferenceThisView:doesReferenceThisView];
+         
        } failure:^(NSURLRequest *errorRequest, NSHTTPURLResponse *response, NSError *error) {
-         [self _didFailToLoadWithError:error];
+         
+         // JM: If the stored operation points to a different request than this one, then this operation
+         // does not refer to this imageView, so don't perform failure actions.
+         BOOL doesReferenceThisView = NO;
+         if ([self.operation isKindOfClass:[AFImageRequestOperation class]]) {
+           doesReferenceThisView = (errorRequest == ((AFImageRequestOperation*)self.operation).request);
+         }
+         
+         [self _didFailToLoadWithError:error
+                 doesReferenceThisView:doesReferenceThisView];
        }];
-        
+      
       [operation setDownloadProgressBlock:^(NSUInteger bytesRead, long long totalBytesRead, long long totalBytesExpectedToRead) {
-          if ([self.delegate respondsToSelector:@selector(networkImageView:readBytes:totalBytes:)]) {
-              [self.delegate networkImageView:self readBytes:totalBytesRead totalBytes:totalBytesExpectedToRead];
+        if ([self.delegate respondsToSelector:@selector(networkImageView:readBytes:totalBytes:)]) {
+          [self.delegate networkImageView:self readBytes:totalBytesRead totalBytes:totalBytesExpectedToRead];
           }
       }];
 
