@@ -403,7 +403,9 @@
         contentMode = UIViewContentModeScaleToFill;
       }
 
-      NSURLRequest *request = [NSURLRequest requestWithURL:url];
+      // JM: Ignore cached data for image path - we already use the NIImageMemoryCache for caching
+      // image data locally, but we can control when to remove data.
+      NSURLRequest *request = [NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringCacheData timeoutInterval:60];
       AFImageRequestOperation *operation =
       [AFImageRequestOperation imageRequestOperationWithRequest:request imageProcessingBlock:
        ^UIImage *(UIImage *downloadedImage) {
