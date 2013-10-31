@@ -88,9 +88,12 @@ NI_FIX_CATEGORY_BUG(NSMutableAttributedStringNimbusAttributedLabel)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 - (void)setTextColor:(UIColor*)color range:(NSRange)range {
   if (nil != color.CGColor) {
+    
+    // JM: Pre-existing attribute color could have been specified using either of these keys.
+    [self removeAttribute:NSForegroundColorAttributeName range:range];
     [self removeAttribute:(NSString *)kCTForegroundColorAttributeName range:range];
 
-    [self addAttribute:(NSString *)kCTForegroundColorAttributeName
+    [self addAttribute:NSForegroundColorAttributeName
                  value:(id)color.CGColor
                  range:range];
   }
