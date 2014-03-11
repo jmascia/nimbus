@@ -166,7 +166,9 @@
   if (NIIsPad()) {
     [self.actionSheet showFromBarButtonItem:self.actionButton animated:YES];
   } else {
-    [self.actionSheet showInView:self.view];
+    // JM: Showing from webView ensures that actionSheet appears correctly on screen. Showing from self.view can
+    // show actionSheet off the screen depending on the layout of underlying controller/navigator views.
+    [self.actionSheet showInView:self.webView];
   }
 }
 
